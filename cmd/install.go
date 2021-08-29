@@ -74,6 +74,7 @@ func runInstall(args []string, wd string) {
 		Singleton:                singleton,
 		IsMod:                    gocBuild.IsMod,
 		ModRootPath:              gocBuild.ModRootPath,
+		Service:                  service,
 		OneMainPackage:           false,
 		GlobalCoverVarImportPath: gocBuild.GlobalCoverVarImportPath,
 	}

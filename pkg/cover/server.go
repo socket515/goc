@@ -19,18 +19,18 @@ package cover
 import (
 	"bytes"
 	"fmt"
+	"github.com/gin-gonic/gin"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/tools/cover"
 	"io"
 	"io/ioutil"
+	"k8s.io/test-infra/gopherage/pkg/cov"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
-
-	"github.com/gin-gonic/gin"
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/tools/cover"
-	"k8s.io/test-infra/gopherage/pkg/cov"
+	"sync"
 )
 
 // LogFile a file to save log.
@@ -39,6 +39,29 @@ const LogFile = "goc.log"
 type server struct {
 	PersistenceFile string
 	Store           Store
+	masterAddrMap   sync.Map // serviceName -> addr
+	addrMap         sync.Map // addr -> serviceName
+}
+
+func (s *server) selectMaster(addr string) {
+	val, ok := s.addrMap.Load(addr)
+	if !ok {
+		return
+	}
+	name := val.(string)
+	val, ok = s.masterAddrMap.Load(name)
+	masterAddr := val.(string)
+	if masterAddr != addr {
+		return
+	}
+	s.masterAddrMap.Delete(name)
+	s.addrMap.Delete(addr)
+	addrs := s.Store.Get(name)
+	if len(addrs) == 0 {
+		return
+	}
+	s.masterAddrMap.Store(name, addrs[0])
+	s.addrMap.Store(addrs[0], name)
 }
 
 // NewFileBasedServer new a file based server with persistenceFile
@@ -91,6 +114,7 @@ func (s *server) Route(w io.Writer) *gin.Engine {
 		v1.POST("/cover/init", s.initSystem)
 		v1.GET("/cover/list", s.listServices)
 		v1.POST("/cover/remove", s.removeServices)
+		v1.GET("/cover/report", s.genCoverReport)
 	}
 
 	return r
@@ -149,6 +173,11 @@ func (s *server) registerService(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+	}
+
+	_, load := s.masterAddrMap.LoadOrStore(service.Name, service.Address)
+	if !load {
+		s.addrMap.Store(service.Address, service.Name)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"result": "success"})
@@ -320,8 +349,41 @@ func (s *server) removeServices(c *gin.Context) {
 			c.JSON(http.StatusExpectationFailed, gin.H{"error": err.Error()})
 			return
 		}
+		s.selectMaster(addr)
 		fmt.Fprintf(c.Writer, "Register service %s removed from the center.", addr)
 	}
+}
+
+func (s *server) genCoverReport(c *gin.Context) {
+	module := c.Query("module")
+	if module == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing module"})
+		return
+	}
+	val, ok := s.masterAddrMap.Load(module)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "can not find module"})
+		return
+	}
+	masterAddr := val.(string)
+	if masterAddr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "can not find module"})
+		return
+	}
+	resp, err := http.Get(masterAddr + "/v1/cover/report")
+	if err != nil {
+		c.JSON(http.StatusExpectationFailed, gin.H{"error": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	bs, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusExpectationFailed, gin.H{"error": err.Error()})
+		return
+	}
+	fmt.Println("get master Addr", masterAddr, "hhahah", string(bs))
+	c.Data(resp.StatusCode, "", bs)
+	return
 }
 
 func convertProfile(p []byte) ([]*cover.Profile, error) {

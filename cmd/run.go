@@ -74,6 +74,7 @@ goc run . [--buildflags] [--exec] [--arguments]
 			AgentPort:                "",
 			IsMod:                    gocBuild.IsMod,
 			ModRootPath:              gocBuild.ModRootPath,
+			Service:                  service,
 			OneMainPackage:           true, // go run is similar with go build, build only one main package
 			GlobalCoverVarImportPath: gocBuild.GlobalCoverVarImportPath,
 		}

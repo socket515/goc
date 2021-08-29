@@ -52,6 +52,7 @@ type TestCover struct {
 	Mode                     string
 	AgentPort                string
 	Center                   string // cover profile host center
+	Service                  string
 	Singleton                bool
 	MainPkgCover             *PackageCover
 	DepsCover                []*PackageCover
@@ -130,6 +131,7 @@ type PackageError struct {
 
 // CoverBuildInfo retreives some info from build
 type CoverInfo struct {
+	Packages                 map[string]*Package
 	Target                   string
 	GoPath                   string
 	IsMod                    bool
@@ -139,6 +141,7 @@ type CoverInfo struct {
 	Args                     string
 	Mode                     string
 	AgentPort                string
+	Service                  string
 	Center                   string
 	Singleton                bool
 }
@@ -190,6 +193,7 @@ func Execute(coverInfo *CoverInfo) error {
 				Mode:                     mode,
 				AgentPort:                agentPort,
 				Center:                   center,
+				Service:                  coverInfo.Service,
 				Singleton:                singleton,
 				MainPkgCover:             mainCover,
 				GlobalCoverVarImportPath: globalCoverVarImportPath,
@@ -211,6 +215,11 @@ func Execute(coverInfo *CoverInfo) error {
 					tc.DepsCover = append(tc.DepsCover, packageCover)
 					seen[dep] = packageCover
 				}
+			}
+
+			// gen code
+			if err := writeFileSrc(coverInfo.Packages, tc.MainPkgCover, tc.DepsCover); err != nil {
+				log.Errorf("failed to gen code, err: %v", err)
 			}
 
 			// inject Http Cover APIs
@@ -576,3 +585,146 @@ func (c *Coverage) Ratio() (ratio float32, err error) {
 func PercentStr(f float32) string {
 	return fmt.Sprintf("%.1f%%", f*100)
 }
+
+// Save Code
+func writeFileSrc(packages map[string]*Package, mainPkgCover *PackageCover, depPkgCovers []*PackageCover) error {
+	fileSrcMap := make(map[string][]byte)
+	dir := mainPkgCover.Package.Dir
+	if pp := packages[mainPkgCover.Package.ImportPath]; pp != nil {
+		dir = pp.Dir
+	}
+	for file, coverFile := range mainPkgCover.Vars {
+		src, err := os.ReadFile(path.Join(dir, file))
+		if err != nil {
+			return err
+		}
+		fileSrcMap[coverFile.File] = src
+	}
+
+	for _, cover := range depPkgCovers {
+		dir := cover.Package.Dir
+		if pp := packages[cover.Package.ImportPath]; pp != nil {
+			dir = pp.Dir
+		}
+		for file, coverFile := range cover.Vars {
+			src, err := os.ReadFile(path.Join(dir, file))
+			if err != nil {
+				return err
+			}
+			fileSrcMap[coverFile.File] = src
+		}
+	}
+
+	bs, _ := json.Marshal(&fileSrcMap)
+	err := os.WriteFile(path.Join(mainPkgCover.Package.Dir, "src.json"), bs, 0666)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path.Join(mainPkgCover.Package.Dir, "template.html"), []byte(tmplHTML), 0666)
+}
+
+const tmplHTML = `
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>{{$pkg := .PackageName}}{{if $pkg}}{{$pkg}}: {{end}}Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			{{colors}}
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				{{range $i, $f := .Files}}
+				<option value="file{{$i}}">{{$f.Name}} ({{printf "%.1f" $f.Coverage}}%)</option>
+				{{end}}
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			{{if .Set}}
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			{{else}}
+				<span class="cov0">no coverage</span>
+				<span class="cov1">low coverage</span>
+				<span class="cov2">*</span>
+				<span class="cov3">*</span>
+				<span class="cov4">*</span>
+				<span class="cov5">*</span>
+				<span class="cov6">*</span>
+				<span class="cov7">*</span>
+				<span class="cov8">*</span>
+				<span class="cov9">*</span>
+				<span class="cov10">high coverage</span>
+			{{end}}
+			</div>
+		</div>
+		<div id="content">
+		{{range $i, $f := .Files}}
+		<pre class="file" id="file{{$i}}" style="display: none">{{$f.Body}}</pre>
+		{{end}}
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>
+`

@@ -72,11 +72,13 @@ func runBuild(args []string, wd string) {
 	// doCover with original buildFlags, with new GOPATH( tmp:original )
 	// in the tmp directory
 	ci := &cover.CoverInfo{
+		Packages:                 gocBuild.Pkgs,
 		Args:                     buildFlags,
 		GoPath:                   gocBuild.NewGOPATH,
 		Target:                   gocBuild.TmpDir,
 		Mode:                     coverMode.String(),
 		AgentPort:                agentPort.String(),
+		Service:                  service,
 		Center:                   center,
 		Singleton:                singleton,
 		IsMod:                    gocBuild.IsMod,
