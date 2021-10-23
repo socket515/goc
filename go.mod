@@ -16,6 +16,7 @@ require (
 	github.com/spf13/viper v1.6.2
 	github.com/stretchr/testify v1.5.1
 	github.com/tongjingran/copy v1.4.2
+	github.com/wangjia184/sortedset v0.0.0-20210325043434-64dd27e173e2
 	golang.org/x/mod v0.3.0
 	golang.org/x/net v0.0.0-20200625001655-4c5254603344
 	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d

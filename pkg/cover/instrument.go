@@ -65,6 +65,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	_ "embed"
 
@@ -168,7 +169,21 @@ func registerHandlers() {
 		log.Fatalf("register address %v failed, err: %v, response: %v", profileAddr, err, string(resp))
 	}
 
+	stopChan := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(2 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				keepaliveSelf(profileAddr)
+			case <-stopChan:
+				return
+			}
+		}
+	}()
 	fn := func() {
+		close(stopChan)
 		var (
 			err          error
 			profileAddrs []string
@@ -248,8 +263,15 @@ func registerHandlers() {
     	if serviceName != "" {
         	selfName = serviceName
     	}
-        requestBody := fmt.Sprintf("{\"service\": [\"%s\"]}", selfName)
-		httpResp, err := http.Post(center+"/v1/cover/profile", "application/json", strings.NewReader(requestBody))
+		requestQuery := map[string]interface{}{"service": []string{selfName}}
+		if r.URL != nil {
+			qq := r.URL.Query()
+			requestQuery["force"] = qq.Get("force") == "1"
+            requestQuery["coverfile"] = qq["coverfile"]
+           	requestQuery["skipfile"] = qq["skipfile"]
+		}
+		requestBody, _ := json.Marshal(&requestQuery)
+		httpResp, err := http.Post(center+"/v1/cover/profile", "application/json", bytes.NewReader(requestBody))
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "failed to get cover file, err: %v", err)
@@ -282,6 +304,40 @@ func registerSelf(address string) ([]byte, error) {
         selfName = serviceName
     }
 	req, err := http.NewRequest("POST", fmt.Sprintf("%s/v1/cover/register?name=%s&address=%s", {{.Center | printf "%q"}}, selfName, address), nil)
+	if err != nil {
+		log.Fatalf("http.NewRequest failed: %v", err)
+		return nil, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil && isNetworkError(err) {
+		log.Printf("[goc][WARN]error occurred:%v, try again", err)
+		resp, err = http.DefaultClient.Do(req)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to register into coverage center, err:%v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body, err:%v", err)
+	}
+
+	if resp.StatusCode != 200 {
+		err = fmt.Errorf("failed to register into coverage center, response code %d", resp.StatusCode)
+	}
+
+	return body, err
+}
+
+func keepaliveSelf(address string) ([]byte, error) {
+	selfName := filepath.Base(os.Args[0])
+    serviceName := {{.Service | printf "%q"}}
+    if serviceName != "" {
+        selfName = serviceName
+    }
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/v1/cover/keepalive?name=%s&address=%s", {{.Center | printf "%q"}}, selfName, address), nil)
 	if err != nil {
 		log.Fatalf("http.NewRequest failed: %v", err)
 		return nil, err

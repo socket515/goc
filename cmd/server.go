@@ -41,14 +41,15 @@ goc server --port=localhost:8080
 		if err != nil {
 			log.Fatalf("New file based server failed, err: %v", err)
 		}
-		server.Run(port)
+		server.Run(logfile, port)
 	},
 }
 
-var port, localPersistence string
+var port, localPersistence, logfile string
 
 func init() {
 	serverCmd.Flags().StringVarP(&port, "port", "", ":7777", "listen port to start a coverage host center")
 	serverCmd.Flags().StringVarP(&localPersistence, "local-persistence", "", "_svrs_address.txt", "the file to save services address information")
+	serverCmd.Flags().StringVarP(&logfile, "logfile", "", "goc.log", "listen port to start a coverage host center")
 	rootCmd.AddCommand(serverCmd)
 }
